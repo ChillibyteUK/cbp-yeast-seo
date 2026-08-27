@@ -50,8 +50,8 @@ function cbp_yeast_seo_schema_enabled() {
  */
 function cbp_yeast_seo_register_settings_page() {
 	add_menu_page(
-		'CBP Yeast SEO',
-		'CBP Yeast SEO',
+		'Yeast SEO',
+		'Yeast SEO',
 		'manage_options',
 		'cbp-yeast-seo',
 		'cbp_yeast_seo_render_settings_page',
@@ -103,7 +103,7 @@ function cbp_yeast_seo_render_enable_schema_field() {
 function cbp_yeast_seo_render_settings_page() {
 	?>
 	<div class="wrap">
-		<h1>CBP Yeast SEO</h1>
+		<h1>Yeast SEO</h1>
 		<form action="options.php" method="post">
 			<?php
 			settings_fields( 'cbp_yeast_seo_settings' );

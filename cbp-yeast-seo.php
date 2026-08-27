@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: Yeast SEO
- * Description: Per-post JSON-LD schema markup with Yoast-awareness (suppresses Yoast's Organization node where this plugin supplies one, warns on type overlap). Ported from cb-hts2026's inc/cb-schema.php, ACF replaced with native post meta. Intended to grow into a full Yoast replacement over time — starts with schema only.
+ * Description: Per-post JSON-LD schema markup with Yoast-awareness (suppresses Yoast's Organization node where this plugin supplies one, warns on type overlap). Intended to grow into a full Yoast replacement over time — starts with schema only.
  * Version: 0.1.0
  * Requires PHP: 7.4
  * Author: Chillibyte - DS
