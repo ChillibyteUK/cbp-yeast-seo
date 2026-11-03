@@ -15,6 +15,7 @@ define( 'CBP_YEAST_SEO_OG_DESCRIPTION_META_KEY', 'cbp_yeast_seo_og_description' 
 define( 'CBP_YEAST_SEO_OG_IMAGE_META_KEY', 'cbp_yeast_seo_og_image' );
 define( 'CBP_YEAST_SEO_TWITTER_IMAGE_META_KEY', 'cbp_yeast_seo_twitter_image' );
 define( 'CBP_YEAST_SEO_ROBOTS_META_KEY', 'cbp_yeast_seo_robots_index' );
+define( 'CBP_YEAST_SEO_CANONICAL_META_KEY', 'cbp_yeast_seo_canonical_url' );
 
 /**
  * Returns the post types this plugin attaches to.
@@ -90,6 +91,13 @@ function cbp_yeast_seo_register_meta() {
 			'default'           => 'index',
 			'show_in_rest'      => true,
 			'sanitize_callback' => 'cbp_yeast_seo_sanitize_robots_meta',
+		),
+		CBP_YEAST_SEO_CANONICAL_META_KEY     => array(
+			'type'              => 'string',
+			'single'            => true,
+			'default'           => '',
+			'show_in_rest'      => true,
+			'sanitize_callback' => 'esc_url_raw',
 		),
 		CBP_YEAST_SEO_SCHEMA_META_KEY        => array(
 			'type'              => 'string',
@@ -183,6 +191,7 @@ function cbp_yeast_seo_render_meta_box( $post ) {
 	$og_image         = get_post_meta( $post->ID, CBP_YEAST_SEO_OG_IMAGE_META_KEY, true );
 	$twitter_image    = get_post_meta( $post->ID, CBP_YEAST_SEO_TWITTER_IMAGE_META_KEY, true );
 	$robots_index     = get_post_meta( $post->ID, CBP_YEAST_SEO_ROBOTS_META_KEY, true );
+	$canonical_url    = get_post_meta( $post->ID, CBP_YEAST_SEO_CANONICAL_META_KEY, true );
 	$schema           = get_post_meta( $post->ID, CBP_YEAST_SEO_SCHEMA_META_KEY, true );
 	$global_noindex   = ! get_option( 'blog_public' );
 	$robots_index     = $robots_index ? $robots_index : 'index';
@@ -208,6 +217,11 @@ function cbp_yeast_seo_render_meta_box( $post ) {
 	<?php if ( $global_noindex ) : ?>
 		<p class="description"><?php esc_html_e( 'WordPress is currently set to discourage search engines, so this page will output noindex regardless of the per-post setting.', 'cbp-yeast-seo' ); ?></p>
 	<?php endif; ?>
+	<p>
+		<label for="cbp-yeast-seo-canonical-field"><strong><?php esc_html_e( 'Canonical URL', 'cbp-yeast-seo' ); ?></strong></label>
+		<input type="url" id="cbp-yeast-seo-canonical-field" name="<?php echo esc_attr( CBP_YEAST_SEO_CANONICAL_META_KEY ); ?>" value="<?php echo esc_attr( $canonical_url ); ?>" class="widefat code">
+	</p>
+	<p class="description"><?php esc_html_e( 'Optional. Overrides the canonical link tag for this page only. Leave blank to keep the default (this page\'s own URL).', 'cbp-yeast-seo' ); ?></p>
 	<hr>
 	<p>
 		<label for="cbp-yeast-seo-og-title-field"><strong><?php esc_html_e( 'Open Graph title', 'cbp-yeast-seo' ); ?></strong></label>
@@ -231,7 +245,7 @@ function cbp_yeast_seo_render_meta_box( $post ) {
 			<label for="cbp-yeast-seo-schema-field"><strong><?php esc_html_e( 'Schema (JSON-LD)', 'cbp-yeast-seo' ); ?></strong></label>
 		</p>
 		<p>
-			<?php esc_html_e( 'One JSON object, or an array/@graph of objects. Leave blank to use Yoast defaults. Saving with a problem will not be blocked; check for an admin notice after save.', 'cbp-yeast-seo' ); ?>
+			<?php echo esc_html( cbp_yeast_seo_yoast_active() ? __( 'One JSON object, or an array/@graph of objects. Leave blank to use Yoast defaults. Saving with a problem will not be blocked; check for an admin notice after save.', 'cbp-yeast-seo' ) : __( 'One JSON object, or an array/@graph of objects. Saving with a problem will not be blocked; check for an admin notice after save.', 'cbp-yeast-seo' ) ); ?>
 		</p>
 		<textarea id="cbp-yeast-seo-schema-field" name="<?php echo esc_attr( CBP_YEAST_SEO_SCHEMA_META_KEY ); ?>" rows="10" class="widefat" style="font-family:monospace;"><?php echo esc_textarea( $schema ); ?></textarea>
 	<?php endif; ?>
@@ -266,6 +280,7 @@ function cbp_yeast_seo_save_meta_box( $post_id ) {
 		CBP_YEAST_SEO_OG_IMAGE_META_KEY       => 'esc_url_raw',
 		CBP_YEAST_SEO_TWITTER_IMAGE_META_KEY  => 'esc_url_raw',
 		CBP_YEAST_SEO_ROBOTS_META_KEY         => 'cbp_yeast_seo_sanitize_robots_meta',
+		CBP_YEAST_SEO_CANONICAL_META_KEY      => 'esc_url_raw',
 		CBP_YEAST_SEO_SCHEMA_META_KEY         => 'cbp_yeast_seo_sanitize_schema_meta',
 	);
 
@@ -327,6 +342,7 @@ function cbp_yeast_seo_enqueue_block_editor_assets() {
 		'window.cbpYeastSeoEditor = ' . wp_json_encode(
 			array(
 				'schemaEnabled' => cbp_yeast_seo_schema_enabled(),
+				'yoastActive'   => cbp_yeast_seo_yoast_active(),
 				'blogPublic'    => (bool) get_option( 'blog_public' ),
 				'homeUrl'       => home_url( '/' ),
 				'defaultSocialImage' => cbp_yeast_seo_get_setting( 'default_social_image', '' ),
@@ -339,6 +355,7 @@ function cbp_yeast_seo_enqueue_block_editor_assets() {
 					'ogImage'          => CBP_YEAST_SEO_OG_IMAGE_META_KEY,
 					'twitterImage'     => CBP_YEAST_SEO_TWITTER_IMAGE_META_KEY,
 					'robotsIndex'      => CBP_YEAST_SEO_ROBOTS_META_KEY,
+					'canonicalUrl'     => CBP_YEAST_SEO_CANONICAL_META_KEY,
 					'schema'           => CBP_YEAST_SEO_SCHEMA_META_KEY,
 				),
 			)
@@ -349,12 +366,36 @@ function cbp_yeast_seo_enqueue_block_editor_assets() {
 add_action( 'enqueue_block_editor_assets', 'cbp_yeast_seo_enqueue_block_editor_assets' );
 
 /**
- * Returns the current singular post ID.
+ * Whether the current request maps to a specific post this plugin can pull
+ * per-post SEO fields from — either a singular view, or the static page set
+ * as the site's "Posts page" (Settings → Reading) being shown as the blog
+ * index. is_singular() alone is false for the latter even though it's a
+ * real page with its own Yeast SEO fields, which otherwise left that
+ * page's title/description/OG/robots settings entirely unused whenever
+ * it's viewed in its posts-page role rather than opened directly.
+ *
+ * @return bool
+ */
+function cbp_yeast_seo_is_managed_view() {
+	return is_singular() || ( is_home() && (int) get_option( 'page_for_posts' ) );
+}
+
+/**
+ * Returns the post ID this plugin's per-post fields apply to for the
+ * current request, per cbp_yeast_seo_is_managed_view().
  *
  * @return int
  */
 function cbp_yeast_seo_current_post_id() {
-	return is_singular() ? (int) get_queried_object_id() : 0;
+	if ( is_singular() ) {
+		return (int) get_queried_object_id();
+	}
+
+	if ( is_home() ) {
+		return (int) get_option( 'page_for_posts' );
+	}
+
+	return 0;
 }
 
 /**
@@ -384,6 +425,15 @@ function cbp_yeast_seo_current_title() {
  */
 function cbp_yeast_seo_current_description() {
 	return trim( cbp_yeast_seo_current_meta( CBP_YEAST_SEO_DESCRIPTION_META_KEY ) );
+}
+
+/**
+ * Returns the per-post canonical URL override, if set.
+ *
+ * @return string
+ */
+function cbp_yeast_seo_current_canonical() {
+	return trim( cbp_yeast_seo_current_meta( CBP_YEAST_SEO_CANONICAL_META_KEY ) );
 }
 
 /**
@@ -436,7 +486,126 @@ function cbp_yeast_seo_current_og_image() {
 		return $image;
 	}
 
+	$post_id = cbp_yeast_seo_current_post_id();
+
+	if ( $post_id ) {
+		$image = cbp_yeast_seo_get_post_image( $post_id );
+
+		if ( '' !== $image ) {
+			return $image;
+		}
+	}
+
 	return (string) cbp_yeast_seo_get_setting( 'default_social_image', '' );
+}
+
+/**
+ * Finds a social image for a post when none was set explicitly: the
+ * featured image first, then the first image found in the post's blocks
+ * (typically the hero), in document order.
+ *
+ * Blocks are parsed, not rendered — rendering a post's content from the
+ * head would fire every dynamic block's side effects (e.g. queued FAQ
+ * schema) a second time. An attachment ID is preferred over a stored URL
+ * so the result is always a current, absolute upload URL.
+ *
+ * @param int $post_id Post ID.
+ * @return string Image URL, or '' when none found.
+ */
+function cbp_yeast_seo_get_post_image( $post_id ) {
+	static $cache = array();
+
+	if ( isset( $cache[ $post_id ] ) ) {
+		return $cache[ $post_id ];
+	}
+
+	$image = '';
+
+	if ( has_post_thumbnail( $post_id ) ) {
+		$image = (string) get_the_post_thumbnail_url( $post_id, 'full' );
+	}
+
+	if ( '' === $image ) {
+		$post = get_post( $post_id );
+
+		if ( $post && has_blocks( $post->post_content ) ) {
+			$image = cbp_yeast_seo_find_block_image( parse_blocks( $post->post_content ) );
+		}
+	}
+
+	/**
+	 * Filters the automatically detected social image for a post.
+	 *
+	 * @param string $image   Image URL, or '' when none was found.
+	 * @param int    $post_id Post ID.
+	 */
+	$cache[ $post_id ] = (string) apply_filters( 'cbp_yeast_seo_post_image', $image, $post_id );
+
+	return $cache[ $post_id ];
+}
+
+/**
+ * Walks parsed blocks depth-first and returns the first image URL found
+ * in any block attribute: a numeric attachment ID under a key containing
+ * "image"/"img", a URL under such a key, or a core/image-style "id"+"url".
+ *
+ * @param array $blocks Parsed blocks.
+ * @return string Image URL, or ''.
+ */
+function cbp_yeast_seo_find_block_image( $blocks ) {
+	foreach ( $blocks as $block ) {
+		$image = cbp_yeast_seo_find_attr_image( isset( $block['attrs'] ) ? $block['attrs'] : array(), 'core/image' === $block['blockName'] );
+
+		if ( '' === $image && ! empty( $block['innerBlocks'] ) ) {
+			$image = cbp_yeast_seo_find_block_image( $block['innerBlocks'] );
+		}
+
+		if ( '' !== $image ) {
+			return $image;
+		}
+	}
+
+	return '';
+}
+
+/**
+ * Searches one attribute array (recursing into repeater-style nested
+ * arrays) for an image, in key order.
+ *
+ * @param array $attrs      Block attributes.
+ * @param bool  $core_image Whether these are core/image attributes.
+ * @return string Image URL, or ''.
+ */
+function cbp_yeast_seo_find_attr_image( $attrs, $core_image = false ) {
+	foreach ( $attrs as $key => $value ) {
+		$is_image_key = $core_image ? in_array( $key, array( 'id', 'url' ), true ) : (bool) preg_match( '/image|img/i', (string) $key );
+
+		if ( is_array( $value ) ) {
+			$image = cbp_yeast_seo_find_attr_image( $value );
+
+			if ( '' !== $image ) {
+				return $image;
+			}
+
+			continue;
+		}
+
+		if ( ! $is_image_key ) {
+			continue;
+		}
+
+		if ( is_numeric( $value ) && (int) $value > 0 && wp_attachment_is_image( (int) $value ) ) {
+			$url = wp_get_attachment_image_url( (int) $value, 'full' );
+
+			if ( $url ) {
+				return $url;
+			}
+		} elseif ( is_string( $value ) && preg_match( '#^(https?:)?//[^\s]+\.(jpe?g|png|webp|gif|avif)(\?[^\s]*)?$#i', $value ) ) {
+			return $value;
+		}
+	}
+
+	return '';
 }
 
 /**
@@ -464,7 +633,7 @@ function cbp_yeast_seo_should_index_current_page() {
 		return false;
 	}
 
-	if ( ! is_singular() ) {
+	if ( ! cbp_yeast_seo_is_managed_view() ) {
 		return true;
 	}
 
@@ -477,7 +646,7 @@ function cbp_yeast_seo_should_index_current_page() {
  * @return bool
  */
 function cbp_yeast_seo_should_override_robots() {
-	return ! get_option( 'blog_public' ) || is_singular();
+	return ! get_option( 'blog_public' ) || cbp_yeast_seo_is_managed_view();
 }
 
 /**
@@ -504,6 +673,32 @@ function cbp_yeast_seo_filter_meta_description( $description ) {
 	return '' !== $custom_description ? $custom_description : $description;
 }
 add_filter( 'wpseo_metadesc', 'cbp_yeast_seo_filter_meta_description' );
+
+/**
+ * Overrides WordPress core's own canonical URL (wp_get_canonical_url(),
+ * used by rel_canonical() on wp_head for singular content) when a custom
+ * one is saved.
+ *
+ * @param string $canonical_url Existing canonical URL.
+ * @return string
+ */
+function cbp_yeast_seo_filter_canonical_url( $canonical_url ) {
+	$custom_canonical = cbp_yeast_seo_current_canonical();
+	return '' !== $custom_canonical ? $custom_canonical : $canonical_url;
+}
+add_filter( 'get_canonical_url', 'cbp_yeast_seo_filter_canonical_url' );
+
+/**
+ * Overrides Yoast's own canonical URL when present.
+ *
+ * @param string $canonical_url Existing canonical URL.
+ * @return string
+ */
+function cbp_yeast_seo_filter_wpseo_canonical( $canonical_url ) {
+	$custom_canonical = cbp_yeast_seo_current_canonical();
+	return '' !== $custom_canonical ? $custom_canonical : $canonical_url;
+}
+add_filter( 'wpseo_canonical', 'cbp_yeast_seo_filter_wpseo_canonical' );
 
 /**
  * Filters WordPress core robots directives.
@@ -627,7 +822,7 @@ add_filter(
  * @return void
  */
 function cbp_yeast_seo_render_frontend_meta() {
-	if ( ! is_singular() || defined( 'WPSEO_VERSION' ) || class_exists( 'WPSEO_Frontend' ) ) {
+	if ( ! cbp_yeast_seo_is_managed_view() || cbp_yeast_seo_yoast_active() ) {
 		return;
 	}
 
@@ -640,12 +835,16 @@ function cbp_yeast_seo_render_frontend_meta() {
 	$site_name    = get_bloginfo( 'name' );
 	$twitter_site = cbp_yeast_seo_get_setting( 'twitter_site', '' );
 	$card_type    = $twitter_image ? 'summary_large_image' : 'summary';
+	// The posts page shown as the blog index is a listing, and the front
+	// page is the site itself, not a single piece of content — "article"
+	// would misdescribe either to OG consumers.
+	$og_type      = is_singular() && ! is_front_page() ? 'article' : 'website';
 
 	if ( '' !== $description ) {
 		echo '<meta name="description" content="' . esc_attr( $description ) . '">' . "\n";
 	}
 
-	echo '<meta property="og:type" content="article">' . "\n";
+	echo '<meta property="og:type" content="' . esc_attr( $og_type ) . '">' . "\n";
 	echo '<meta property="og:url" content="' . esc_url( $url ) . '">' . "\n";
 
 	if ( '' !== $title ) {
@@ -666,6 +865,13 @@ function cbp_yeast_seo_render_frontend_meta() {
 		echo '<meta property="og:image" content="' . esc_url( $og_image ) . '">' . "\n";
 	}
 
+	// Dates for article-type pages (posts and pages alike, matching og:type
+	// above). Skipped for the front page / blog index, which report "website".
+	if ( 'article' === $og_type && $post_id ) {
+		echo '<meta property="article:published_time" content="' . esc_attr( get_post_time( 'c', true, $post_id ) ) . '">' . "\n";
+		echo '<meta property="article:modified_time" content="' . esc_attr( get_post_modified_time( 'c', true, $post_id ) ) . '">' . "\n";
+	}
+
 	if ( '' !== $twitter_image ) {
 		echo '<meta name="twitter:image" content="' . esc_url( $twitter_image ) . '">' . "\n";
 	}
@@ -677,3 +883,42 @@ function cbp_yeast_seo_render_frontend_meta() {
 	}
 }
 add_action( 'wp_head', 'cbp_yeast_seo_render_frontend_meta', 1 );
+
+/**
+ * Outputs a canonical link tag for non-singular views.
+ *
+ * WordPress core's own rel_canonical() (wp-includes/link-template.php) only
+ * fires for is_singular() — the posts page, taxonomy/post-type archives,
+ * and author archives get no canonical at all out of core, which is what
+ * left a page like the posts page (e.g. a "Guides" index) without one.
+ * Skipped entirely when Yoast is active/handling it (same detection this
+ * file already uses for render_frontend_meta) or on singular content, since
+ * core's own rel_canonical() already covers both cases there.
+ *
+ * @return void
+ */
+function cbp_yeast_seo_render_canonical() {
+	if ( is_singular() || cbp_yeast_seo_yoast_active() ) {
+		return;
+	}
+
+	if ( is_404() || is_search() ) {
+		return; // Nothing stable to canonicalise to.
+	}
+
+	$custom_canonical = cbp_yeast_seo_current_canonical();
+
+	if ( '' !== $custom_canonical ) {
+		$url = $custom_canonical;
+	} else {
+		$paged = max( (int) get_query_var( 'paged' ), (int) get_query_var( 'page' ), 1 );
+		$url   = get_pagenum_link( $paged, false );
+	}
+
+	if ( ! $url ) {
+		return;
+	}
+
+	echo '<link rel="canonical" href="' . esc_url( $url ) . '">' . "\n";
+}
+add_action( 'wp_head', 'cbp_yeast_seo_render_canonical', 1 );

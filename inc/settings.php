@@ -17,6 +17,16 @@ defined( 'ABSPATH' ) || exit;
 define( 'CBP_YEAST_SEO_SETTINGS_OPTION', 'cbp_yeast_seo_settings' );
 
 /**
+ * Whether Yoast SEO is active, so Yoast-specific wording and behaviour are
+ * only shown where they mean something.
+ *
+ * @return bool
+ */
+function cbp_yeast_seo_yoast_active() {
+	return defined( 'WPSEO_VERSION' ) || class_exists( 'WPSEO_Frontend' );
+}
+
+/**
  * Read one CBP Yeast SEO setting.
  *
  * @param string $key     Setting key.
@@ -43,7 +53,161 @@ function cbp_yeast_seo_sanitize_settings( $input ) {
 		'twitter_site'              => isset( $input['twitter_site'] ) ? sanitize_text_field( wp_unslash( $input['twitter_site'] ) ) : '',
 		'enable_sitemaps'           => empty( $input['enable_sitemaps'] ) ? '0' : '1',
 		'sitemap_post_types'        => cbp_yeast_seo_sanitize_sitemap_post_types( $input['sitemap_post_types'] ?? array() ),
+	) + cbp_yeast_seo_sanitize_organization( $input );
+}
+
+/**
+ * Organization schema fields: setting key => label, input type, help.
+ *
+ * @return array[]
+ */
+function cbp_yeast_seo_organization_text_fields() {
+	return array(
+		'org_name'        => array( 'Organisation name', 'text', 'The name shown to search engines. Nothing is output until this is filled in.' ),
+		'org_legal_name'  => array( 'Legal name', 'text', 'Registered company name, if different.' ),
+		'org_url'         => array( 'URL', 'url', 'Defaults to the site home page when empty.' ),
+		'org_description' => array( 'Description', 'textarea', '' ),
+		'org_email'       => array( 'Email', 'email', '' ),
+		'org_phone'       => array( 'Phone', 'text', 'Include the country code if you can, e.g. +1 407-349-3590.' ),
+		'org_street'      => array( 'Street address', 'text', '' ),
+		'org_locality'    => array( 'City / locality', 'text', '' ),
+		'org_region'      => array( 'State / region', 'text', '' ),
+		'org_postcode'    => array( 'Postcode / ZIP', 'text', '' ),
+		'org_country'     => array( 'Country', 'text', 'Two-letter code (US, GB) preferred.' ),
+		'org_founded'     => array( 'Founding date', 'text', 'YYYY, YYYY-MM or YYYY-MM-DD.' ),
 	);
+}
+
+/**
+ * Organization schema @type choices.
+ *
+ * @return string[] Type => label.
+ */
+function cbp_yeast_seo_organization_type_choices() {
+	return array(
+		'Organization'        => 'Organization',
+		'Corporation'         => 'Corporation',
+		'LocalBusiness'       => 'Local business',
+		'ProfessionalService' => 'Professional service',
+	);
+}
+
+/**
+ * Whether the "build from fields" Organization editor is shown.
+ *
+ * Off by default: a fixed set of fields can't express owners, opening hours,
+ * reviews and the rest of what an Organization node can carry, so the raw
+ * JSON-LD box is the only editor until that is designed. Sites still holding
+ * field values are migrated to raw JSON-LD on first admin load, and the
+ * stored field values are kept untouched. Return true from this filter to
+ * bring the field editor back.
+ *
+ * @return bool
+ */
+function cbp_yeast_seo_org_fields_ui() {
+	return (bool) apply_filters( 'cbp_yeast_seo_org_fields_ui', false );
+}
+
+/**
+ * Converts a settings-driven (fields) Organization into raw JSON-LD, once, so
+ * hiding the field editor changes nothing on the front end.
+ *
+ * @return void
+ */
+function cbp_yeast_seo_migrate_org_fields_to_raw() {
+	if ( cbp_yeast_seo_org_fields_ui() || cbp_yeast_seo_org_raw_mode() || '' === cbp_yeast_seo_get_setting( 'org_name', '' ) ) {
+		return;
+	}
+
+	$settings = get_option( CBP_YEAST_SEO_SETTINGS_OPTION, array() );
+
+	if ( '' !== trim( (string) ( $settings['org_raw'] ?? '' ) ) ) {
+		$settings['org_mode'] = 'raw';
+	} else {
+		$settings['org_raw']  = wp_json_encode( cbp_yeast_seo_build_organization(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT );
+		$settings['org_mode'] = 'raw';
+	}
+
+	update_option( CBP_YEAST_SEO_SETTINGS_OPTION, $settings );
+}
+add_action( 'admin_init', 'cbp_yeast_seo_migrate_org_fields_to_raw', 20 );
+
+/**
+ * Sanitizes the Organization schema settings.
+ *
+ * @param array $input Raw submitted settings.
+ * @return array
+ */
+function cbp_yeast_seo_sanitize_organization( $input ) {
+	$out = array();
+
+	foreach ( cbp_yeast_seo_organization_text_fields() as $key => $field ) {
+		$raw = isset( $input[ $key ] ) ? wp_unslash( $input[ $key ] ) : '';
+
+		switch ( $field[1] ) {
+			case 'url':
+				$out[ $key ] = esc_url_raw( $raw );
+				break;
+			case 'email':
+				$out[ $key ] = sanitize_email( $raw );
+				break;
+			case 'textarea':
+				$out[ $key ] = sanitize_textarea_field( $raw );
+				break;
+			default:
+				$out[ $key ] = sanitize_text_field( $raw );
+		}
+	}
+
+	if ( ! preg_match( '/^\d{4}(-\d{2}(-\d{2})?)?$/', $out['org_founded'] ) ) {
+		$out['org_founded'] = '';
+	}
+
+	$out['org_mode'] = isset( $input['org_mode'] ) && 'raw' === $input['org_mode'] ? 'raw' : 'fields';
+	$out['org_raw']  = isset( $input['org_raw'] ) ? trim( (string) wp_unslash( $input['org_raw'] ) ) : '';
+
+	if ( '' !== $out['org_raw'] ) {
+		foreach ( cbp_yeast_seo_validate_schema_value( $out['org_raw'] ) as $problem ) {
+			add_settings_error( CBP_YEAST_SEO_SETTINGS_OPTION, 'cbp_yeast_seo_org_raw', 'Organization JSON-LD: ' . $problem, 'warning' );
+		}
+	}
+
+	$type             = isset( $input['org_type'] ) ? sanitize_text_field( wp_unslash( $input['org_type'] ) ) : '';
+	$out['org_type']  = isset( cbp_yeast_seo_organization_type_choices()[ $type ] ) ? $type : 'Organization';
+	$out['org_logo']  = isset( $input['org_logo'] ) ? absint( $input['org_logo'] ) : 0;
+
+	$urls = array();
+	foreach ( preg_split( '/\R/', isset( $input['org_same_as'] ) ? (string) wp_unslash( $input['org_same_as'] ) : '' ) as $line ) {
+		$url = esc_url_raw( trim( $line ), array( 'http', 'https' ) );
+		if ( '' !== $url ) {
+			$urls[] = $url;
+		}
+	}
+	$out['org_same_as'] = implode( "\n", array_unique( $urls ) );
+
+	$out['org_show_front']   = empty( $input['org_show_front'] ) ? '0' : '1';
+	$out['org_show_all']     = empty( $input['org_show_all'] ) ? '0' : '1';
+	$out['org_contact_page'] = isset( $input['org_contact_page'] ) ? absint( $input['org_contact_page'] ) : 0;
+	$out['org_extra_pages']  = isset( $input['org_extra_pages'] ) && is_array( $input['org_extra_pages'] )
+		? array_values( array_unique( array_filter( array_map( 'absint', $input['org_extra_pages'] ) ) ) )
+		: array();
+
+	if ( ! cbp_yeast_seo_org_fields_ui() ) {
+		// The field editor isn't on the page, so its inputs aren't submitted.
+		// Keep what is stored rather than blanking it, and stay in raw mode.
+		$existing    = get_option( CBP_YEAST_SEO_SETTINGS_OPTION, array() );
+		$field_keys = array_merge( array_keys( cbp_yeast_seo_organization_text_fields() ), array( 'org_type', 'org_logo', 'org_same_as' ) );
+
+		foreach ( $field_keys as $key ) {
+			if ( isset( $existing[ $key ] ) ) {
+				$out[ $key ] = $existing[ $key ];
+			}
+		}
+
+		$out['org_mode'] = 'raw';
+	}
+
+	return $out;
 }
 
 /**
@@ -96,15 +260,16 @@ function cbp_yeast_seo_register_settings_page() {
 
 	register_setting( 'cbp_yeast_seo_settings', CBP_YEAST_SEO_SETTINGS_OPTION, 'cbp_yeast_seo_sanitize_settings' );
 
-	add_settings_section( 'cbp_yeast_seo_schema', 'Schema', '__return_false', 'cbp-yeast-seo' );
+	add_settings_section( 'cbp_yeast_seo_schema', 'Schema', '__return_false', 'cbp-yeast-seo-schema' );
 	add_settings_section( 'cbp_yeast_seo_defaults', 'Defaults', '__return_false', 'cbp-yeast-seo' );
 	add_settings_section( 'cbp_yeast_seo_sitemaps', 'XML Sitemaps', '__return_false', 'cbp-yeast-seo' );
+	add_settings_section( 'cbp_yeast_seo_organization', 'Organization schema', 'cbp_yeast_seo_render_organization_intro', 'cbp-yeast-seo-schema' );
 
 	add_settings_field(
 		'enable_schema',
 		'Enable Schema Markup',
 		'cbp_yeast_seo_render_enable_schema_field',
-		'cbp-yeast-seo',
+		'cbp-yeast-seo-schema',
 		'cbp_yeast_seo_schema'
 	);
 
@@ -139,6 +304,37 @@ function cbp_yeast_seo_register_settings_page() {
 		'cbp-yeast-seo',
 		'cbp_yeast_seo_sitemaps'
 	);
+
+	if ( cbp_yeast_seo_org_fields_ui() ) {
+		add_settings_field( 'org_mode', 'Source', 'cbp_yeast_seo_render_org_mode_field', 'cbp-yeast-seo-schema', 'cbp_yeast_seo_organization' );
+	}
+
+	add_settings_field( 'org_raw', 'JSON-LD', 'cbp_yeast_seo_render_org_raw_field', 'cbp-yeast-seo-schema', 'cbp_yeast_seo_organization' );
+
+	if ( cbp_yeast_seo_org_fields_ui() ) {
+		add_settings_field( 'org_type', 'Type', 'cbp_yeast_seo_render_org_type_field', 'cbp-yeast-seo-schema', 'cbp_yeast_seo_organization' );
+
+		foreach ( cbp_yeast_seo_organization_text_fields() as $key => $field ) {
+			add_settings_field(
+				$key,
+				$field[0],
+				'cbp_yeast_seo_render_org_text_field',
+				'cbp-yeast-seo-schema',
+				'cbp_yeast_seo_organization',
+				array(
+					'key'       => $key,
+					'type'      => $field[1],
+					'help'      => $field[2],
+					'label_for' => 'cbp-yeast-seo-' . $key,
+				)
+			);
+		}
+
+		add_settings_field( 'org_logo', 'Logo', 'cbp_yeast_seo_render_org_logo_field', 'cbp-yeast-seo-schema', 'cbp_yeast_seo_organization' );
+		add_settings_field( 'org_same_as', 'Social profiles (sameAs)', 'cbp_yeast_seo_render_org_same_as_field', 'cbp-yeast-seo-schema', 'cbp_yeast_seo_organization' );
+	}
+
+	add_settings_field( 'org_display', 'Display on', 'cbp_yeast_seo_render_org_display_field', 'cbp-yeast-seo-schema', 'cbp_yeast_seo_organization' );
 }
 add_action( 'admin_menu', 'cbp_yeast_seo_register_settings_page' );
 
@@ -158,9 +354,9 @@ function cbp_yeast_seo_render_enable_schema_field() {
 			value="1"
 			<?php checked( $checked ); ?>
 		>
-		Output the per-post JSON-LD schema field and the Yoast Organization-node suppression filter.
+		<?php echo cbp_yeast_seo_yoast_active() ? 'Output the per-post JSON-LD schema field and the Yoast Organization-node suppression filter.' : 'Output the Organization schema and the per-post JSON-LD schema field.'; ?>
 	</label>
-	<p class="description">Turning this off stops schema output entirely and leaves Yoast's own output untouched — the per-post field content is preserved either way.</p>
+	<p class="description">Turning this off stops schema output entirely<?php echo cbp_yeast_seo_yoast_active() ? ' and leaves Yoast\'s own output untouched' : ''; ?> — the per-post field content is preserved either way.</p>
 	<?php
 }
 
@@ -186,7 +382,7 @@ function cbp_yeast_seo_render_twitter_site_field() {
 	$value = cbp_yeast_seo_get_setting( 'twitter_site', '' );
 	?>
 	<input type="text" name="<?php echo esc_attr( CBP_YEAST_SEO_SETTINGS_OPTION ); ?>[twitter_site]" value="<?php echo esc_attr( $value ); ?>" class="regular-text">
-	<p class="description">Optional handle like <code>@chillibyte</code> for <code>twitter:site</code>.</p>
+	<p class="description">Optional handle like <code>@yourhandle</code> for <code>twitter:site</code>.</p>
 	<?php
 }
 
@@ -224,7 +420,7 @@ function cbp_yeast_seo_render_enable_sitemaps_field() {
 	<label>
 		<input type="hidden" name="<?php echo esc_attr( CBP_YEAST_SEO_SETTINGS_OPTION ); ?>[enable_sitemaps]" value="0">
 		<input type="checkbox" name="<?php echo esc_attr( CBP_YEAST_SEO_SETTINGS_OPTION ); ?>[enable_sitemaps]" value="1" <?php checked( $checked ); ?>>
-		Generate a Yoast-style <code>sitemap_index.xml</code> and per-post-type sitemap files.
+		Generate a <code>sitemap_index.xml</code> and per-post-type sitemap files.
 	</label>
 	<?php
 }
@@ -260,16 +456,210 @@ function cbp_yeast_seo_render_sitemap_post_types_field() {
  * @return void
  */
 function cbp_yeast_seo_render_settings_page() {
+	$tabs = array(
+		'general' => array( 'General', 'cbp-yeast-seo' ),
+		'schema'  => array( 'Schema', 'cbp-yeast-seo-schema' ),
+	);
+	// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+	$active = isset( $_GET['tab'] ) && isset( $tabs[ $_GET['tab'] ] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'general';
 	?>
 	<div class="wrap">
 		<h1>Yeast SEO</h1>
+		<nav class="nav-tab-wrapper" data-cbp-tabs>
+			<?php foreach ( $tabs as $slug => $tab ) : ?>
+				<a href="<?php echo esc_url( add_query_arg( array( 'page' => 'cbp-yeast-seo', 'tab' => $slug ), admin_url( 'admin.php' ) ) ); ?>" class="nav-tab<?php echo $slug === $active ? ' nav-tab-active' : ''; ?>" data-tab="<?php echo esc_attr( $slug ); ?>"><?php echo esc_html( $tab[0] ); ?></a>
+			<?php endforeach; ?>
+		</nav>
 		<form action="options.php" method="post">
-			<?php
-			settings_fields( 'cbp_yeast_seo_settings' );
-			do_settings_sections( 'cbp-yeast-seo' );
-			submit_button();
-			?>
+			<?php settings_fields( 'cbp_yeast_seo_settings' ); ?>
+			<?php foreach ( $tabs as $slug => $tab ) : ?>
+				<div class="cbp-yeast-seo-panel" data-panel="<?php echo esc_attr( $slug ); ?>" <?php echo $slug === $active ? '' : 'hidden'; ?>>
+					<?php do_settings_sections( $tab[1] ); ?>
+				</div>
+			<?php endforeach; ?>
+			<?php submit_button(); ?>
 		</form>
 	</div>
+	<?php
+}
+
+/**
+ * Loads the media picker for the Organization logo on the settings page only.
+ *
+ * @param string $hook Current admin page hook.
+ * @return void
+ */
+function cbp_yeast_seo_settings_assets( $hook ) {
+	if ( 'toplevel_page_cbp-yeast-seo' !== $hook ) {
+		return;
+	}
+
+	wp_enqueue_media();
+	$script_path = CBP_YEAST_SEO_PATH . 'assets/settings.js';
+	wp_enqueue_script( 'cbp-yeast-seo-settings', CBP_YEAST_SEO_URL . 'assets/settings.js', array(), file_exists( $script_path ) ? filemtime( $script_path ) : CBP_YEAST_SEO_VERSION, true );
+}
+add_action( 'admin_enqueue_scripts', 'cbp_yeast_seo_settings_assets' );
+
+/**
+ * Intro text for the Organization section.
+ *
+ * @return void
+ */
+function cbp_yeast_seo_render_organization_intro() {
+	echo '<p>Paste the Organization JSON-LD for this site. It is output only on the pages chosen under Display on; a page whose own schema field declares an Organization keeps that instead.</p>';
+}
+
+/**
+ * Render the fields / raw JSON-LD source toggle.
+ *
+ * @return void
+ */
+function cbp_yeast_seo_render_org_mode_field() {
+	$mode = cbp_yeast_seo_get_setting( 'org_mode', 'fields' );
+	?>
+	<?php
+	$logo_id = absint( cbp_yeast_seo_get_setting( 'org_logo', 0 ) );
+	$logo    = $logo_id ? wp_get_attachment_image_src( $logo_id, 'full' ) : false;
+	?>
+	<fieldset data-org-mode data-org-id="<?php echo esc_attr( cbp_yeast_seo_organization_id() ); ?>" data-org-home="<?php echo esc_attr( home_url( '/' ) ); ?>" <?php echo $logo ? 'data-logo-url="' . esc_attr( $logo[0] ) . '" data-logo-w="' . (int) $logo[1] . '" data-logo-h="' . (int) $logo[2] . '"' : ''; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>>
+		<label style="margin-right:1.5em;"><input type="radio" name="<?php echo esc_attr( CBP_YEAST_SEO_SETTINGS_OPTION ); ?>[org_mode]" value="fields" <?php checked( 'raw' !== $mode ); ?>> Build from fields</label>
+		<label><input type="radio" name="<?php echo esc_attr( CBP_YEAST_SEO_SETTINGS_OPTION ); ?>[org_mode]" value="raw" <?php checked( 'raw' === $mode ); ?>> Paste raw JSON-LD</label>
+	</fieldset>
+	<p class="description">The display rules below apply either way. Switching copies the current values across (asking first if it would overwrite something).</p>
+	<?php
+}
+
+/**
+ * Render the raw JSON-LD textarea.
+ *
+ * @return void
+ */
+function cbp_yeast_seo_render_org_raw_field() {
+	?>
+	<textarea name="<?php echo esc_attr( CBP_YEAST_SEO_SETTINGS_OPTION ); ?>[org_raw]" rows="14" class="large-text code" style="font-family:monospace;" data-org-raw><?php echo esc_textarea( cbp_yeast_seo_get_setting( 'org_raw', '' ) ); ?></textarea>
+	<p class="description">One JSON object, or an array/@graph of objects, with <code>@context</code> and an <code>@type</code>. Give the Organization an <code>@id</code> ending in <code>#organization</code>. Invalid JSON is not output.</p>
+	<?php
+}
+
+/**
+ * Render the Organization @type select.
+ *
+ * @return void
+ */
+function cbp_yeast_seo_render_org_type_field() {
+	$current = cbp_yeast_seo_get_setting( 'org_type', 'Organization' );
+	?>
+	<select name="<?php echo esc_attr( CBP_YEAST_SEO_SETTINGS_OPTION ); ?>[org_type]">
+		<?php foreach ( cbp_yeast_seo_organization_type_choices() as $value => $label ) : ?>
+			<option value="<?php echo esc_attr( $value ); ?>" <?php selected( $current, $value ); ?>><?php echo esc_html( $label ); ?></option>
+		<?php endforeach; ?>
+	</select>
+	<?php
+}
+
+/**
+ * Render one Organization text-style field.
+ *
+ * @param array $args Field args: key, type, help.
+ * @return void
+ */
+function cbp_yeast_seo_render_org_text_field( $args ) {
+	$name  = CBP_YEAST_SEO_SETTINGS_OPTION . '[' . $args['key'] . ']';
+	$value = cbp_yeast_seo_get_setting( $args['key'], '' );
+	$id    = 'cbp-yeast-seo-' . $args['key'];
+
+	if ( 'textarea' === $args['type'] ) {
+		printf( '<textarea id="%s" name="%s" rows="3" class="large-text">%s</textarea>', esc_attr( $id ), esc_attr( $name ), esc_textarea( $value ) );
+	} else {
+		printf( '<input type="%s" id="%s" name="%s" value="%s" class="regular-text">', esc_attr( $args['type'] ), esc_attr( $id ), esc_attr( $name ), esc_attr( $value ) );
+	}
+
+	if ( '' !== $args['help'] ) {
+		echo '<p class="description">' . esc_html( $args['help'] ) . '</p>';
+	}
+}
+
+/**
+ * Render the logo media picker.
+ *
+ * @return void
+ */
+function cbp_yeast_seo_render_org_logo_field() {
+	$id  = absint( cbp_yeast_seo_get_setting( 'org_logo', 0 ) );
+	$img = $id ? wp_get_attachment_image( $id, 'medium', false, array( 'style' => 'max-width:200px;height:auto;' ) ) : '';
+	?>
+	<div class="cbp-yeast-seo-logo">
+		<input type="hidden" name="<?php echo esc_attr( CBP_YEAST_SEO_SETTINGS_OPTION ); ?>[org_logo]" value="<?php echo esc_attr( $id ); ?>" data-logo-input>
+		<div data-logo-preview><?php echo $img; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
+		<button type="button" class="button" data-logo-select>Choose logo</button>
+		<button type="button" class="button-link" data-logo-remove <?php echo $id ? '' : 'hidden'; ?>>Remove</button>
+	</div>
+	<?php
+}
+
+/**
+ * Render the sameAs textarea.
+ *
+ * @return void
+ */
+function cbp_yeast_seo_render_org_same_as_field() {
+	?>
+	<textarea name="<?php echo esc_attr( CBP_YEAST_SEO_SETTINGS_OPTION ); ?>[org_same_as]" rows="5" class="large-text code"><?php echo esc_textarea( cbp_yeast_seo_get_setting( 'org_same_as', '' ) ); ?></textarea>
+	<p class="description">One profile URL per line (LinkedIn, Facebook, Instagram, X, YouTube…).</p>
+	<?php
+}
+
+/**
+ * Whether the home page shows the Organization schema. On unless switched off.
+ *
+ * @return bool
+ */
+function cbp_yeast_seo_org_show_front() {
+	$settings = get_option( CBP_YEAST_SEO_SETTINGS_OPTION, array() );
+	return ! isset( $settings['org_show_front'] ) || ! empty( $settings['org_show_front'] );
+}
+
+/**
+ * Render the "Display on" controls.
+ *
+ * @return void
+ */
+function cbp_yeast_seo_render_org_display_field() {
+	$option  = esc_attr( CBP_YEAST_SEO_SETTINGS_OPTION );
+	$extra   = (array) cbp_yeast_seo_get_setting( 'org_extra_pages', array() );
+	$pages   = get_pages( array( 'sort_column' => 'post_title' ) );
+	?>
+	<label style="display:block;margin-bottom:8px;">
+		<input type="hidden" name="<?php echo $option; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>[org_show_front]" value="0">
+		<input type="checkbox" name="<?php echo $option; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>[org_show_front]" value="1" <?php checked( cbp_yeast_seo_org_show_front() ); ?>>
+		Home page (front page)
+	</label>
+	<p style="margin:0 0 8px;">
+		<label for="cbp-yeast-seo-org-contact">Contact page</label><br>
+		<?php
+		wp_dropdown_pages(
+			array(
+				'name'             => CBP_YEAST_SEO_SETTINGS_OPTION . '[org_contact_page]',
+				'id'               => 'cbp-yeast-seo-org-contact',
+				'selected'         => absint( cbp_yeast_seo_get_setting( 'org_contact_page', 0 ) ),
+				'show_option_none' => '— None —',
+				'option_none_value' => '0',
+			)
+		);
+		?>
+	</p>
+	<p style="margin:0 0 8px;">
+		<label for="cbp-yeast-seo-org-extra">Other pages (hold Ctrl/Cmd to select several)</label><br>
+		<select id="cbp-yeast-seo-org-extra" name="<?php echo $option; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>[org_extra_pages][]" multiple size="6" style="min-width:20em;">
+			<?php foreach ( $pages as $page ) : ?>
+				<option value="<?php echo esc_attr( $page->ID ); ?>" <?php selected( in_array( $page->ID, array_map( 'absint', $extra ), true ) ); ?>><?php echo esc_html( $page->post_title ); ?></option>
+			<?php endforeach; ?>
+		</select>
+	</p>
+	<label style="display:block;">
+		<input type="hidden" name="<?php echo $option; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>[org_show_all]" value="0">
+		<input type="checkbox" name="<?php echo $option; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>[org_show_all]" value="1" <?php checked( '1' === (string) cbp_yeast_seo_get_setting( 'org_show_all', '0' ) ); ?>>
+		Every page on the site (overrides the choices above)
+	</label>
 	<?php
 }

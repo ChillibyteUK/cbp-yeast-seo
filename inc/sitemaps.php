@@ -47,6 +47,17 @@ function cbp_yeast_seo_register_sitemap_query_vars( $vars ) {
 add_filter( 'query_vars', 'cbp_yeast_seo_register_sitemap_query_vars' );
 
 /**
+ * Stops WordPress canonical redirects from adding a trailing slash to sitemap files.
+ *
+ * @param string|false $redirect_url Proposed redirect URL.
+ * @return string|false
+ */
+function cbp_yeast_seo_disable_sitemap_canonical_redirect( $redirect_url ) {
+	return get_query_var( 'cbp_yeast_seo_sitemap' ) ? false : $redirect_url;
+}
+add_filter( 'redirect_canonical', 'cbp_yeast_seo_disable_sitemap_canonical_redirect' );
+
+/**
  * Flushes rewrites on activation.
  *
  * @return void
@@ -148,17 +159,130 @@ function cbp_yeast_seo_sitemap_post_ids( $post_type ) {
 function cbp_yeast_seo_output_xml( $xml ) {
 	status_header( 200 );
 	header( 'Content-Type: application/xml; charset=' . get_bloginfo( 'charset' ) );
+	header( 'Vary: Sec-Fetch-Dest' );
 	echo $xml; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 	exit;
 }
 
 /**
- * Returns the stylesheet URL for sitemap rendering.
+ * Whether the request is a person looking at the sitemap in a browser, who
+ * gets a clickable HTML view instead of raw XML.
  *
- * @return string
+ * Decided by Sec-Fetch-Dest: document, which browsers send on navigation and
+ * which crawlers, scripts and fetch() calls do not. The Accept header is not
+ * used: some crawlers include text/html in it, and handing one HTML in place
+ * of the sitemap would break it. When the header is absent (crawlers, plain
+ * HTTP, older browsers) the answer is no, so XML is always the fallback.
+ * `?xml=1` forces XML in a browser.
+ *
+ * @return bool
  */
-function cbp_yeast_seo_sitemap_stylesheet_url() {
-	return CBP_YEAST_SEO_URL . 'assets/sitemap.xsl';
+function cbp_yeast_seo_request_wants_html() {
+	if ( isset( $_GET['xml'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only display switch.
+		return false;
+	}
+
+	$dest = isset( $_SERVER['HTTP_SEC_FETCH_DEST'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_SEC_FETCH_DEST'] ) ) : '';
+
+	return 'document' === $dest;
+}
+
+/**
+ * Emits the HTML view of a sitemap and exits.
+ *
+ * @param string  $kind  'index' (list of sitemap files) or 'urlset' (list of URLs).
+ * @param array[] $rows  Index: loc, lastmod, count. URL set: loc, lastmod.
+ * @param string  $title Heading, e.g. the post type being listed.
+ * @return void
+ */
+function cbp_yeast_seo_output_sitemap_html( $kind, $rows, $title = '' ) {
+	$is_index  = 'index' === $kind;
+	$index_url = home_url( '/sitemap_index.xml' );
+	$raw_url   = '?xml=1'; // Relative: keeps whichever sitemap is being viewed.
+	$heading   = $is_index ? __( 'XML Sitemap Index', 'cbp-yeast-seo' ) : sprintf( /* translators: %s: post type. */ __( 'XML Sitemap: %s', 'cbp-yeast-seo' ), $title );
+
+	status_header( 200 );
+	header( 'Content-Type: text/html; charset=' . get_bloginfo( 'charset' ) );
+	header( 'X-Robots-Tag: noindex, follow' );
+	header( 'Vary: Sec-Fetch-Dest' );
+	?>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="<?php echo esc_attr( get_bloginfo( 'charset' ) ); ?>">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, follow">
+<title><?php echo esc_html( $heading ); ?></title>
+<style>
+	body { margin: 0; padding: 2rem; font: 16px/1.5 system-ui, sans-serif; color: #1f2933; background: #eef2f7; }
+	.wrap { max-width: 1400px; margin: 0 auto; background: #fff; border: 1px solid #d9e2ec; border-radius: 12px; overflow: hidden; }
+	header { padding: 1.5rem 2rem; background: #0f172a; color: #fff; }
+	header h1 { margin: 0 0 .25rem; font-size: 1.6rem; line-height: 1.2; }
+	header p { margin: 0; opacity: .8; }
+	header a { color: #93c5fd; }
+	.main { padding: 1.25rem 2rem 2rem; }
+	.meta { margin: 0 0 1rem; color: #52606d; }
+	table { width: 100%; border-collapse: collapse; }
+	th, td { padding: .7rem .75rem; border-bottom: 1px solid #e5e7eb; text-align: left; vertical-align: top; }
+	th { font-size: .75rem; letter-spacing: .08em; text-transform: uppercase; color: #52606d; }
+	tr:hover td { background: #f8fafc; }
+	td a { color: #0f62fe; text-decoration: none; word-break: break-all; }
+	td a:hover { text-decoration: underline; }
+	.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+	@media (max-width: 600px) { body { padding: .75rem; } header, .main { padding-inline: 1rem; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+	<header>
+		<h1><?php echo esc_html( $heading ); ?></h1>
+		<p>
+			<?php if ( ! $is_index ) { ?>
+				<a href="<?php echo esc_url( $index_url ); ?>">&larr; <?php esc_html_e( 'Sitemap index', 'cbp-yeast-seo' ); ?></a> &middot;
+			<?php } ?>
+			<a href="<?php echo esc_url( $raw_url ); ?>"><?php esc_html_e( 'View raw XML', 'cbp-yeast-seo' ); ?></a>
+		</p>
+	</header>
+	<div class="main">
+		<p class="meta">
+			<?php
+			echo esc_html(
+				$is_index
+					/* translators: %s: number of sitemap files. */
+					? sprintf( _n( '%s sitemap file', '%s sitemap files', count( $rows ), 'cbp-yeast-seo' ), number_format_i18n( count( $rows ) ) )
+					/* translators: %s: number of URLs. */
+					: sprintf( _n( '%s URL', '%s URLs', count( $rows ), 'cbp-yeast-seo' ), number_format_i18n( count( $rows ) ) )
+			);
+			?>
+		</p>
+		<table>
+			<thead>
+				<tr>
+					<th><?php esc_html_e( 'Location', 'cbp-yeast-seo' ); ?></th>
+					<?php if ( $is_index ) { ?>
+					<th><?php esc_html_e( 'URLs', 'cbp-yeast-seo' ); ?></th>
+					<?php } ?>
+					<th><?php esc_html_e( 'Last modified', 'cbp-yeast-seo' ); ?></th>
+				</tr>
+			</thead>
+			<tbody>
+				<?php foreach ( $rows as $row ) { ?>
+				<tr>
+					<td><a href="<?php echo esc_url( $row['loc'] ); ?>"><?php echo esc_html( $row['loc'] ); ?></a></td>
+					<?php if ( $is_index ) { ?>
+					<td class="num"><?php echo esc_html( number_format_i18n( absint( $row['count'] ) ) ); ?></td>
+					<?php } ?>
+					<td class="num"><?php echo esc_html( $row['lastmod'] ); ?></td>
+				</tr>
+				<?php } ?>
+			</tbody>
+		</table>
+	</div>
+</div>
+</body>
+</html>
+	<?php
+	exit;
 }
 
 /**
@@ -202,15 +326,17 @@ function cbp_yeast_seo_render_sitemap_index() {
 		}
 	}
 
+	if ( cbp_yeast_seo_request_wants_html() ) {
+		cbp_yeast_seo_output_sitemap_html( 'index', $items );
+	}
+
 	$xml  = '<?xml version="1.0" encoding="' . esc_attr( get_bloginfo( 'charset' ) ) . '"?>';
-	$xml .= '<?xml-stylesheet type="text/xsl" href="' . esc_url( cbp_yeast_seo_sitemap_stylesheet_url() ) . '"?>';
-	$xml .= '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:cbp="https://chillibyte.co.uk/ns/yeast-seo">';
+	$xml .= '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">';
 
 	foreach ( $items as $item ) {
 		$xml .= '<sitemap>';
 		$xml .= '<loc>' . esc_url( $item['loc'] ) . '</loc>';
 		$xml .= '<lastmod>' . esc_html( $item['lastmod'] ) . '</lastmod>';
-		$xml .= '<cbp:count>' . absint( $item['count'] ) . '</cbp:count>';
 		$xml .= '</sitemap>';
 	}
 
@@ -239,8 +365,22 @@ function cbp_yeast_seo_render_post_type_sitemap( $post_type, $page ) {
 		cbp_yeast_seo_output_sitemap_404();
 	}
 
+	if ( cbp_yeast_seo_request_wants_html() ) {
+		$rows = array();
+
+		foreach ( $chunks[ $page - 1 ] as $post_id ) {
+			$rows[] = array(
+				'loc'     => get_permalink( $post_id ),
+				'lastmod' => get_post_modified_time( DATE_W3C, true, $post_id ),
+			);
+		}
+
+		$post_type_object = get_post_type_object( $post_type );
+
+		cbp_yeast_seo_output_sitemap_html( 'urlset', $rows, $post_type_object ? $post_type_object->labels->name : $post_type );
+	}
+
 	$xml  = '<?xml version="1.0" encoding="' . esc_attr( get_bloginfo( 'charset' ) ) . '"?>';
-	$xml .= '<?xml-stylesheet type="text/xsl" href="' . esc_url( cbp_yeast_seo_sitemap_stylesheet_url() ) . '"?>';
 	$xml .= '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">';
 
 	foreach ( $chunks[ $page - 1 ] as $post_id ) {
@@ -269,6 +409,13 @@ function cbp_yeast_seo_maybe_render_sitemap() {
 
 	if ( ! cbp_yeast_seo_sitemaps_enabled() ) {
 		cbp_yeast_seo_output_sitemap_404();
+	}
+
+	$request_path = (string) wp_parse_url( isset( $_SERVER['REQUEST_URI'] ) ? wp_unslash( $_SERVER['REQUEST_URI'] ) : '', PHP_URL_PATH ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+
+	if ( '/' !== $request_path && '/' === substr( $request_path, -1 ) ) {
+		wp_safe_redirect( home_url( '/' . ltrim( untrailingslashit( substr( $request_path, strlen( (string) wp_parse_url( home_url(), PHP_URL_PATH ) ) ) ), '/' ) ), 301 );
+		exit;
 	}
 
 	if ( 'index' === $type ) {

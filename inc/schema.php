@@ -36,7 +36,7 @@ define( 'CBP_YEAST_SEO_YOAST_OWNED_TYPES', array( 'WebPage', 'WebSite', 'Breadcr
  * Yoast's cross-references resolve. Organization subtypes (LocalBusiness,
  * Corporation) can be added here.
  */
-define( 'CBP_YEAST_SEO_ORGANIZATION_TYPES', array( 'Organization' ) );
+define( 'CBP_YEAST_SEO_ORGANIZATION_TYPES', array( 'Organization', 'Corporation', 'LocalBusiness', 'ProfessionalService' ) );
 
 /**
  * Returns the canonical @id an Organization node must use.
@@ -141,7 +141,9 @@ function cbp_yeast_seo_validate_schema_value( $value ) {
 
 			if ( 'organization' !== $fragment ) {
 				$problems[] = sprintf(
-					'%s is an %s, so its @id must end in "#organization" (e.g. "%s") — otherwise Yoast\'s publisher reference will not resolve to it.',
+					cbp_yeast_seo_yoast_active()
+						? '%s is an %s, so its @id must end in "#organization" (e.g. "%s") — otherwise Yoast\'s publisher reference will not resolve to it.'
+						: '%s is an %s, so its @id should end in "#organization" (e.g. "%s") so other schema on the site can reference it.',
 					$label,
 					reset( $org_type ),
 					cbp_yeast_seo_organization_id()
@@ -172,7 +174,9 @@ function cbp_yeast_seo_check_overlap( $nodes ) {
 
 		$types = array_map( 'strval', (array) $node['@type'] );
 
-		$overlaps = array_merge( $overlaps, array_intersect( $types, CBP_YEAST_SEO_YOAST_OWNED_TYPES ) );
+		if ( cbp_yeast_seo_yoast_active() ) {
+			$overlaps = array_merge( $overlaps, array_intersect( $types, CBP_YEAST_SEO_YOAST_OWNED_TYPES ) );
+		}
 
 		if ( array_intersect( $types, CBP_YEAST_SEO_ORGANIZATION_TYPES ) && ! empty( $node['@id'] ) ) {
 			$id_host   = wp_parse_url( (string) $node['@id'], PHP_URL_HOST );
@@ -180,7 +184,7 @@ function cbp_yeast_seo_check_overlap( $nodes ) {
 
 			if ( $id_host && $site_host && $id_host !== $site_host ) {
 				$messages[] = sprintf(
-					'the Organization @id points at %1$s, but this site is %2$s. That is expected on local or staging; on production it must be %3$s or Yoast\'s publisher reference will not resolve to it.',
+					'the Organization @id points at %1$s, but this site is %2$s. That is expected on local or staging; on production it must be %3$s or references to it will not resolve.',
 					$id_host,
 					$site_host,
 					cbp_yeast_seo_organization_id()
@@ -326,7 +330,11 @@ function cbp_yeast_seo_declares_type( array $types ) {
  * @return bool
  */
 function cbp_yeast_seo_maybe_disable_yoast_organization( $needed ) {
-	return cbp_yeast_seo_declares_type( CBP_YEAST_SEO_ORGANIZATION_TYPES ) ? false : $needed;
+	if ( cbp_yeast_seo_declares_type( CBP_YEAST_SEO_ORGANIZATION_TYPES ) || cbp_yeast_seo_org_should_output() ) {
+		return false;
+	}
+
+	return $needed;
 }
 add_filter( 'wpseo_schema_needs_organization', 'cbp_yeast_seo_maybe_disable_yoast_organization' );
 
@@ -377,3 +385,189 @@ function cbp_yeast_seo_render() {
 	echo '<script type="application/ld+json">' . $json . '</script>' . "\n"; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 }
 add_action( 'wp_head', 'cbp_yeast_seo_render', 20 );
+
+/**
+ * Whether the settings-driven Organization node has enough to output.
+ *
+ * @return bool
+ */
+function cbp_yeast_seo_org_configured() {
+	if ( ! cbp_yeast_seo_schema_enabled() ) {
+		return false;
+	}
+
+	return cbp_yeast_seo_org_raw_mode() ? array() !== cbp_yeast_seo_org_raw_nodes() : '' !== cbp_yeast_seo_get_setting( 'org_name', '' );
+}
+
+/**
+ * Whether the "Display on" rules put the Organization node on a page.
+ *
+ * @param bool $is_front Whether it is the front page.
+ * @param int  $page_id  Page ID, 0 when not a page.
+ * @return bool
+ */
+function cbp_yeast_seo_org_displays_on( $is_front, $page_id ) {
+	if ( '1' === (string) cbp_yeast_seo_get_setting( 'org_show_all', '0' ) ) {
+		return true;
+	}
+
+	if ( $is_front && cbp_yeast_seo_org_show_front() ) {
+		return true;
+	}
+
+	$ids   = array_map( 'absint', (array) cbp_yeast_seo_get_setting( 'org_extra_pages', array() ) );
+	$ids[] = absint( cbp_yeast_seo_get_setting( 'org_contact_page', 0 ) );
+
+	return $page_id && in_array( $page_id, array_filter( $ids ), true );
+}
+
+/**
+ * Whether the settings-driven Organization node belongs on the current page.
+ *
+ * A page whose own schema field declares an Organization keeps that one instead.
+ *
+ * @return bool
+ */
+function cbp_yeast_seo_org_should_output() {
+	if ( is_admin() || ! cbp_yeast_seo_org_configured() || cbp_yeast_seo_declares_type( CBP_YEAST_SEO_ORGANIZATION_TYPES ) ) {
+		return false;
+	}
+
+	return cbp_yeast_seo_org_displays_on( is_front_page(), is_singular( 'page' ) ? get_queried_object_id() : 0 );
+}
+
+/**
+ * Whether the Organization schema comes from the raw JSON-LD textarea.
+ *
+ * @return bool
+ */
+function cbp_yeast_seo_org_raw_mode() {
+	return 'raw' === cbp_yeast_seo_get_setting( 'org_mode', 'fields' );
+}
+
+/**
+ * Decoded entity nodes from the raw JSON-LD textarea; empty when blank or invalid.
+ *
+ * @return array
+ */
+function cbp_yeast_seo_org_raw_nodes() {
+	$raw = trim( (string) cbp_yeast_seo_get_setting( 'org_raw', '' ) );
+
+	if ( '' === $raw ) {
+		return array();
+	}
+
+	$data = json_decode( $raw, true );
+
+	return JSON_ERROR_NONE === json_last_error() ? cbp_yeast_seo_collect_nodes( $data ) : array();
+}
+
+/**
+ * Wraps nodes as one JSON-LD document: a single node, or a shared-context @graph.
+ *
+ * @param array $nodes Entity nodes.
+ * @return array
+ */
+function cbp_yeast_seo_nodes_to_payload( array $nodes ) {
+	if ( 1 === count( $nodes ) ) {
+		return isset( $nodes[0]['@context'] ) ? $nodes[0] : array( '@context' => 'https://schema.org' ) + $nodes[0];
+	}
+
+	foreach ( $nodes as &$node ) {
+		unset( $node['@context'] );
+	}
+
+	return array(
+		'@context' => 'https://schema.org',
+		'@graph'   => $nodes,
+	);
+}
+
+/**
+ * Builds the Organization node from the settings, omitting empty properties.
+ *
+ * @return array
+ */
+function cbp_yeast_seo_build_organization() {
+	$get  = 'cbp_yeast_seo_get_setting';
+	$type = $get( 'org_type', 'Organization' );
+
+	$node = array(
+		'@context' => 'https://schema.org',
+		'@type'    => isset( cbp_yeast_seo_organization_type_choices()[ $type ] ) ? $type : 'Organization',
+		'@id'      => cbp_yeast_seo_organization_id(),
+		'name'     => $get( 'org_name' ),
+		'url'      => $get( 'org_url', home_url( '/' ) ),
+	);
+
+	$simple = array(
+		'legalName'   => 'org_legal_name',
+		'description' => 'org_description',
+		'email'       => 'org_email',
+		'telephone'   => 'org_phone',
+		'foundingDate' => 'org_founded',
+	);
+
+	foreach ( $simple as $property => $key ) {
+		$value = $get( $key );
+		if ( '' !== $value ) {
+			$node[ $property ] = $value;
+		}
+	}
+
+	$logo_id = absint( $get( 'org_logo', 0 ) );
+	$logo    = $logo_id ? wp_get_attachment_image_src( $logo_id, 'full' ) : false;
+
+	if ( $logo ) {
+		$node['logo'] = array(
+			'@type'  => 'ImageObject',
+			'url'    => $logo[0],
+			'width'  => (int) $logo[1],
+			'height' => (int) $logo[2],
+		);
+	}
+
+	$address = array_filter(
+		array(
+			'streetAddress'   => $get( 'org_street' ),
+			'addressLocality' => $get( 'org_locality' ),
+			'addressRegion'   => $get( 'org_region' ),
+			'postalCode'      => $get( 'org_postcode' ),
+			'addressCountry'  => $get( 'org_country' ),
+		),
+		'strlen'
+	);
+
+	if ( $address ) {
+		$node['address'] = array( '@type' => 'PostalAddress' ) + $address;
+	}
+
+	$same_as = array_filter( preg_split( '/\R/', (string) $get( 'org_same_as' ) ) );
+
+	if ( $same_as ) {
+		$node['sameAs'] = array_values( $same_as );
+	}
+
+	return $node;
+}
+
+/**
+ * Outputs the settings-driven Organization JSON-LD in wp_head.
+ *
+ * @return void
+ */
+function cbp_yeast_seo_render_organization() {
+	if ( ! cbp_yeast_seo_org_should_output() ) {
+		return;
+	}
+
+	$payload = cbp_yeast_seo_org_raw_mode() ? cbp_yeast_seo_nodes_to_payload( cbp_yeast_seo_org_raw_nodes() ) : cbp_yeast_seo_build_organization();
+	$json    = wp_json_encode( $payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG );
+
+	if ( false === $json ) {
+		return;
+	}
+
+	echo '<script type="application/ld+json">' . $json . '</script>' . "\n"; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+}
+add_action( 'wp_head', 'cbp_yeast_seo_render_organization', 19 );

@@ -38,10 +38,22 @@
     }
 
     if (count > max) {
-      return __("A bit long.", "cbp-yeast-seo");
+      return __("Too long - may be cut off in search results.", "cbp-yeast-seo");
     }
 
     return __("Good length.", "cbp-yeast-seo");
+  }
+
+  function countClass(count, min, max) {
+    if (count > max) {
+      return "cbp-yeast-seo-count cbp-yeast-seo-count--long";
+    }
+
+    if (count > 0 && count < min) {
+      return "cbp-yeast-seo-count cbp-yeast-seo-count--short";
+    }
+
+    return "cbp-yeast-seo-count";
   }
 
   function previewUrl(permalink, slug) {
@@ -174,6 +186,7 @@
     var ogImage = postData.meta[settings.metaKeys.ogImage] || "";
     var twitterImage = postData.meta[settings.metaKeys.twitterImage] || "";
     var robotsIndex = postData.meta[settings.metaKeys.robotsIndex] || "index";
+    var canonicalUrl = postData.meta[settings.metaKeys.canonicalUrl] || "";
     var schema = postData.meta[settings.metaKeys.schema] || "";
     var titleCount = countText(title);
     var descriptionCount = countText(description);
@@ -263,13 +276,15 @@
                     updateMeta(settings.metaKeys.title, value);
                   },
                   help: __(
-                    "Overrides the browser title and Yoast title for this page only.",
+                    settings.yoastActive
+                      ? "Overrides the browser title and Yoast title for this page only."
+                      : "Overrides the browser title for this page only.",
                     "cbp-yeast-seo",
                   ),
                 }),
                 el(
                   "p",
-                  { className: "cbp-yeast-seo-count" },
+                  { className: countClass(titleCount, 30, 60) },
                   titleCount + " characters - " + guidance(titleCount, 30, 60),
                 ),
                 el(TextareaControl, {
@@ -286,7 +301,7 @@
                 }),
                 el(
                   "p",
-                  { className: "cbp-yeast-seo-count" },
+                  { className: countClass(descriptionCount, 70, 160) },
                   descriptionCount +
                     " characters - " +
                     guidance(descriptionCount, 70, 160),
@@ -305,6 +320,18 @@
                     { label: __("Index", "cbp-yeast-seo"), value: "index" },
                     { label: __("Noindex", "cbp-yeast-seo"), value: "noindex" },
                   ],
+                }),
+                el(TextControl, {
+                  label: __("Canonical URL", "cbp-yeast-seo"),
+                  type: "url",
+                  value: canonicalUrl,
+                  onChange: function (value) {
+                    updateMeta(settings.metaKeys.canonicalUrl, value);
+                  },
+                  help: __(
+                    "Optional. Overrides the canonical link tag for this page only. Leave blank to keep the default (this page's own URL).",
+                    "cbp-yeast-seo",
+                  ),
                 }),
               ),
               settings.schemaEnabled &&
