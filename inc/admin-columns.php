@@ -157,7 +157,7 @@ function cbp_yeast_seo_admin_column_styles() {
 	if ( ! $screen || empty( $screen->post_type ) || ! in_array( $screen->post_type, cbp_yeast_seo_post_types(), true ) ) {
 		return;
 	}
-	echo '<style>.cbp-yeast-seo-too-long{display:inline-block;margin-left:6px;padding:0 6px;border-radius:10px;background:#b32d2e;color:#fff;font-size:11px;line-height:1.8;white-space:nowrap}.column-cbp_yeast_seo_title{width:18%}.column-cbp_yeast_seo_description{width:22%}.cbp-yeast-seo-schema-status{font-size:18px;font-weight:700;line-height:1}.column-cbp_yeast_seo_schema{width:5%}.column-cbp_yeast_seo_title,.column-cbp_yeast_seo_description{word-wrap:break-word;overflow-wrap:anywhere}</style>';
+	echo '<style>.cbp-yeast-seo-too-long{display:inline-block;margin-left:6px;padding:0 6px;border-radius:10px;background:#b32d2e;color:#fff;font-size:11px;line-height:1.8;white-space:nowrap}.cbp-yeast-seo-schema-status{font-size:18px;font-weight:700;line-height:1}.column-cbp_yeast_seo_title,.column-cbp_yeast_seo_description{word-wrap:break-word;overflow-wrap:anywhere}</style>';
 }
 function cbp_yeast_seo_register_admin_columns() {
 	foreach ( cbp_yeast_seo_post_types() as $post_type ) {
