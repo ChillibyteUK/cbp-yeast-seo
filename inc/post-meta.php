@@ -109,6 +109,10 @@ function cbp_yeast_seo_register_meta() {
 	);
 
 	foreach ( cbp_yeast_seo_post_types() as $post_type ) {
+		// REST only exposes registered meta for post types that support custom fields,
+		// and the block editor saves through REST. Custom post types often omit it.
+		add_post_type_support( $post_type, 'custom-fields' );
+
 		foreach ( $fields as $meta_key => $args ) {
 			register_post_meta(
 				$post_type,
