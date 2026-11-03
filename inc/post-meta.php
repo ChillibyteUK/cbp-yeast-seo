@@ -122,7 +122,7 @@ function cbp_yeast_seo_register_meta() {
 		}
 	}
 }
-add_action( 'init', 'cbp_yeast_seo_register_meta' );
+add_action( 'init', 'cbp_yeast_seo_register_meta', 99 );
 
 /**
  * Sanitizes the robots choice.
