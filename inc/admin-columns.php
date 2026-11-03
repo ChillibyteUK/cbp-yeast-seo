@@ -27,24 +27,37 @@ function cbp_yeast_seo_too_long_badge( $value, $max ) {
 	return ' <span class="cbp-yeast-seo-too-long" title="' . esc_attr( $title ) . '">' . esc_html( sprintf( /* translators: %d: character count. */ __( '%d - too long', 'cbp-yeast-seo' ), $length ) ) . '</span>';
 }
 
+/**
+ * Whether Yeast adds its own SEO Title and Meta Desc. list columns.
+ *
+ * CBP Update Metadata already lists the meta title, description and
+ * indexability, so Yeast leaves those two columns out when it is active to
+ * avoid showing the same data twice. Filterable per site.
+ *
+ * @return bool
+ */
+function cbp_yeast_seo_show_meta_columns() {
+	return (bool) apply_filters( 'cbp_yeast_seo_show_meta_columns', ! class_exists( 'CBP_Update_Metadata_Plugin' ) );
+}
+
 function cbp_yeast_seo_filter_posts_columns( $columns ) {
+	$added = array();
+	if ( cbp_yeast_seo_show_meta_columns() ) {
+		$added['cbp_yeast_seo_title']       = __( 'SEO Title', 'cbp-yeast-seo' );
+		$added['cbp_yeast_seo_description'] = __( 'Meta Desc.', 'cbp-yeast-seo' );
+	}
+	if ( cbp_yeast_seo_schema_enabled() ) {
+		$added['cbp_yeast_seo_schema'] = __( 'Schema', 'cbp-yeast-seo' );
+	}
 	$new = array();
 	foreach ( $columns as $key => $label ) {
 		$new[ $key ] = $label;
 		if ( 'title' === $key ) {
-			$new['cbp_yeast_seo_title']       = __( 'SEO Title', 'cbp-yeast-seo' );
-			$new['cbp_yeast_seo_description'] = __( 'Meta Desc.', 'cbp-yeast-seo' );
-			if ( cbp_yeast_seo_schema_enabled() ) {
-				$new['cbp_yeast_seo_schema'] = __( 'Schema', 'cbp-yeast-seo' );
-			}
+			$new = array_merge( $new, $added );
 		}
 	}
-	if ( ! isset( $new['cbp_yeast_seo_title'] ) ) {
-		$new['cbp_yeast_seo_title']       = __( 'SEO Title', 'cbp-yeast-seo' );
-		$new['cbp_yeast_seo_description'] = __( 'Meta Desc.', 'cbp-yeast-seo' );
-		if ( cbp_yeast_seo_schema_enabled() ) {
-			$new['cbp_yeast_seo_schema'] = __( 'Schema', 'cbp-yeast-seo' );
-		}
+	if ( ! isset( $columns['title'] ) ) {
+		$new = array_merge( $new, $added );
 	}
 	return $new;
 }
